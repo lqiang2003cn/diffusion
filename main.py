@@ -7,6 +7,8 @@ import seaborn as sns
 import itertools
 from tqdm.auto import tqdm
 
+device="cuda"
+
 data_distribution = torch.distributions.mixture_same_family.MixtureSameFamily(
     torch.distributions.Categorical(torch.tensor([1, 2])),
     torch.distributions.Normal(torch.tensor([-4., 4.]), torch.tensor([1., 1.]))
@@ -27,7 +29,7 @@ def do_diffusion(data, steps=TIME_STEPS, beta=BETA):
     # starting from t=0 (i.e., the dataset)
 
     distributions, samples = [None], [data]
-    xt = data
+    xt = data.to(device)
     for t in range(steps):
         q = torch.distributions.Normal(
             np.sqrt(1 - beta) * xt,
@@ -36,18 +38,18 @@ def do_diffusion(data, steps=TIME_STEPS, beta=BETA):
         xt = q.sample()
 
         distributions.append(q)
-        samples.append(xt)
+        samples.append(xt.to(device))
 
     return distributions, samples
 
 
 ds, samples = do_diffusion(dataset)
 
-for t in torch.stack(samples)[:, :, 0].T[:100]:
-    plt.plot(t, c='navy', alpha=0.1)
-plt.xlabel('Diffusion time')
-plt.ylabel('Data')
-plt.show()
+# for t in torch.stack(samples)[:, :, 0].T[:100]:
+#     plt.plot(t, c='navy', alpha=0.1)
+# plt.xlabel('Diffusion time')
+# plt.ylabel('Data')
+# plt.show()
 
 
 def compute_loss(forward_distributions, forward_samples, mean_model, var_model):
@@ -56,20 +58,20 @@ def compute_loss(forward_distributions, forward_samples, mean_model, var_model):
 
     # loss for x(T)
     p = torch.distributions.Normal(
-        torch.zeros(forward_samples[0].shape),
-        torch.ones(forward_samples[0].shape)
+        torch.zeros(forward_samples[0].shape).to(device),
+        torch.ones(forward_samples[0].shape).to(device)
     )
     loss = -p.log_prob(forward_samples[-1]).mean()
 
     for t in range(1, len(forward_samples)):
-        xt = forward_samples[t]  # x(t)
-        xprev = forward_samples[t - 1]  # x(t-1)
+        xt = forward_samples[t].to(device) # x(t)
+        xprev = forward_samples[t - 1].to(device)  # x(t-1)
         q = forward_distributions[t]  # q( x(t) | x(t-1) )
 
         # normalize t between 0 and 1 and add it as a new column
         # to the inputs of the mu and sigma networks
         xin = torch.cat(
-            (xt, (t / len(forward_samples)) * torch.ones(xt.shape[0], 1)),
+            (xt, (t / len(forward_samples)) * torch.ones(xt.shape[0], 1).to(device)),
             dim=1
         )
         # compute p( x(t-1) | x(t) ) as equation 1
@@ -87,11 +89,11 @@ def compute_loss(forward_distributions, forward_samples, mean_model, var_model):
 mean_model = torch.nn.Sequential(
     torch.nn.Linear(2, 4), torch.nn.ReLU(),
     torch.nn.Linear(4, 1)
-)
+).to(device)
 var_model = torch.nn.Sequential(
     torch.nn.Linear(2, 4), torch.nn.ReLU(),
     torch.nn.Linear(4, 1), torch.nn.Softplus()
-)
+).to(device)
 
 optim = torch.optim.AdamW(
     itertools.chain(mean_model.parameters(), var_model.parameters()),
